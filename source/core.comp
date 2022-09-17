@@ -1,0 +1,164 @@
+#define PI 3.14159265358979323846
+
+struct ray
+{
+    // The origin of the ray, can be any vector.
+    vec3 origin;
+
+    // The direction of the ray, must be a unit vector.
+    vec3 direction;
+};
+
+struct material
+{
+    // Either specular or scattering.
+    bool specular;
+
+    // Any value in (0, 1].
+    float albedo;
+
+    // Any value larger or equals to 0.
+    float radiation;
+
+    // Discribe the refractive index of the material.
+    // Larger or equals to 1.
+    float eta;
+
+    // Any value in [0, 1].
+    float transparency;
+} MATERIAL_VOID = material(true, 1.f, 0.f, 1.f, 1.f);
+
+struct hit_record
+{
+    // Hit or not.
+    bool success;
+
+    // The hit point, undefined when missed.
+    vec3 point;
+
+    // The normal of the hit surface, a unit vector point from
+    // phase 2 to phase 1. Undefined when missed.
+    vec3 normal;
+
+    // The phase light comes from. Undefined when missed.
+    material phase_1;
+
+    // The opposite phase. Undefined when missed. Two phases
+    // can't be the same.
+    material phase_2;
+} HIT_RECORD_MISS;
+
+// Ray interacts with the scene.
+hit_record hit(ray r)
+{
+    return HIT_RECORD_MISS; //XXX
+}
+
+// The scene is finite. Get the background irradiance for 'r'.
+float background(ray r)
+{
+    return 0.f; //XXX
+}
+
+// Get a uniform distribute random number in [0, 1).
+float random()
+{
+    return 0.f; //TODO
+}
+
+// Get a uniform distribute random unit vector.
+vec3 random_on_sphere()
+{
+    float theta = random() * 2.f * PI;
+    float z = random() * 2.f - 1.f;
+    float s = sqrt(1.f - z * z);
+
+    return vec3(s * cos(theta), s * sin(theta), z);
+}
+
+// Get a uniform distribute random unit vector in the hemisphere
+// defined by the normal 'n'.
+vec3 random_on_hemisphere(vec3 n)
+{
+    vec3 r = random_on_sphere();
+    return faceforward(r, -r, n);
+}
+
+float fresnel_schlick(float eta_1, float eta_2, float cos_theta_i)
+{
+    float r0 = (eta_1 - eta_2) / (eta_1 + eta_2);
+    r0 *= r0;
+
+    return r0 + (1.f - r0) * pow(1.f - cos_theta_i, 5.f);
+}
+
+// Dispatch a random experiment with the expectation of its result
+// equals to the spectral irradiance(in the unit W/(m*m*nm)) in the
+// space.
+float trace(ray r)
+{
+    float path_factor = 1.f;
+    float correct_factor = 1.f;
+    float result = 0.f;
+
+    while(true)
+    {
+        // get p_continue based on current path properties
+        float p_continue = min(8.f * path_factor, min(0.8 + 0.6 * path_factor, 1.f));
+
+        if(random() < p_continue)
+        {
+            correct_factor /= p_continue;
+
+            hit_record rec = hit(r);
+
+            if(rec.success)
+            {
+                path_factor *= pow(rec.phase_1.transparency, distance(r.origin, rec.point));
+                result += path_factor * correct_factor * rec.phase_2.radiation;
+                path_factor *= rec.phase_2.albedo;
+
+                vec3 dir;
+
+                if(rec.phase_2.specular)
+                {
+                    dir = refract(r.direction, rec.normal, rec.phase_1.eta / rec.phase_2.eta);
+                    float fs_r = fresnel_schlick(rec.phase_1.eta, rec.phase_2.eta, -dot(r.direction, rec.normal));
+                    float fs_t = sign(rec.phase_2.transparency) * dot(dir, dir) * (1.f - fs_r);
+
+                    // get p_reflect based on current hit properties
+                    float p_reflect = fs_r / (fs_r + fs_t);
+
+                    if(random() < p_reflect)
+                    {
+                        dir = reflect(r.direction, rec.normal);
+                        path_factor *= fs_r;
+                        correct_factor /= p_reflect;
+                    }
+                    else
+                    {
+                        path_factor *= fs_t;
+                        correct_factor /= 1.f - p_reflect;
+                    }
+                }
+                else
+                {
+                    dir = random_on_hemisphere(rec.normal); //TODO
+                    path_factor *= dot(dir, rec.normal);
+                }
+
+                r = ray(rec.point, dir);
+            }
+            else
+            {
+                result += path_factor * correct_factor * background(r);
+
+                break;
+            }
+        }
+        else
+            break;
+    }
+
+    return result;
+}
